@@ -1,0 +1,18 @@
+services:
+  web:
+    build: ./app
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: "postgres://postgres:password@db:5432/myapp"
+      REDIS_URL: "redis://redis:6379"
+    depends_on:
+      - db
+      - redis
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: myapp
+  redis:
+    image: redis:7-alpine
