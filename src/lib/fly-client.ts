@@ -139,6 +139,34 @@ export class FlyClient {
     );
   }
 
+  async allocateIpAddress(
+    appName: string,
+    type: "v6" | "shared_v4" | "v4"
+  ): Promise<{ id: string; address: string; type: string } | null> {
+    const query = `mutation($input: AllocateIPAddressInput!) {
+      allocateIpAddress(input: $input) {
+        ipAddress { id address type region }
+      }
+    }`;
+    const variables = { input: { appId: appName, type } };
+
+    const response = await fetch("https://api.fly.io/graphql", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ query, variables }),
+    });
+
+    const result = (await response.json()) as {
+      data?: { allocateIpAddress?: { ipAddress: { id: string; address: string; type: string } | null } };
+      errors?: Array<{ message: string }>;
+    };
+
+    return result.data?.allocateIpAddress?.ipAddress ?? null;
+  }
+
   async waitForMachine(
     appName: string,
     machineId: string,

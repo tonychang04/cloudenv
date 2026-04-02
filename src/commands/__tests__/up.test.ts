@@ -5,6 +5,7 @@ const mockCreateMachine = vi.fn();
 const mockWaitForMachine = vi.fn();
 const mockDeleteMachine = vi.fn();
 const mockDeleteApp = vi.fn();
+const mockAllocateIpAddress = vi.fn();
 const mockSaveEnv = vi.fn();
 const mockFindEnv = vi.fn();
 const mockFindEnvByBranch = vi.fn();
@@ -49,6 +50,7 @@ vi.mock("../../lib/fly-client", () => {
       waitForMachine: (...args: unknown[]) => mockWaitForMachine(...args),
       deleteMachine: (...args: unknown[]) => mockDeleteMachine(...args),
       deleteApp: (...args: unknown[]) => mockDeleteApp(...args),
+      allocateIpAddress: (...args: unknown[]) => mockAllocateIpAddress(...args),
     })),
     FlyApiError,
   };
@@ -99,6 +101,7 @@ describe("up command", () => {
     mockWaitForMachine.mockResolvedValue(undefined);
     mockDeleteMachine.mockResolvedValue(undefined);
     mockDeleteApp.mockResolvedValue(undefined);
+    mockAllocateIpAddress.mockResolvedValue({ id: "ip1", address: "2a09::1", type: "v6" });
   });
 
   it("creates Fly app and machine for a single-service compose", async () => {
