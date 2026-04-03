@@ -98,12 +98,17 @@ export const upCommand = new Command("up")
       process.exit(1);
     }
 
-    // Check if any services need docker build
-    const needsBuild = parsed.services.some((s) => s.build && !s.image);
+    // Check if any services need docker build (no image, or local image name)
+    const needsBuild = parsed.services.some(
+      (s) => s.build && (!s.image || !s.image.includes("/"))
+    );
     if (needsBuild && !checkDockerAvailable()) {
+      const buildServices = parsed.services
+        .filter((s) => s.build && (!s.image || !s.image.includes("/")))
+        .map((s) => s.name);
       console.error(
         pc.red(
-          "Docker is required to build services with 'build:' in docker-compose.yml. Please install Docker."
+          `Docker is required to build ${buildServices.join(", ")}. Please start Docker and try again.`
         )
       );
       process.exit(1);
