@@ -13,24 +13,71 @@ import {
 import { buildAndPush, checkDockerAvailable } from "../lib/docker";
 import { saveEnv, findEnv, findEnvByBranch, EnvRecord } from "../lib/env-store";
 import { getBranchName, getRepoName } from "../lib/git";
+import { detectStack } from "../lib/detect";
+import { writeGeneratedFiles } from "../lib/generate-compose";
+import * as fs from "fs";
 
 export const upCommand = new Command("up")
-  .description("Provision environment from docker-compose.yml")
-  .option("-f, --file <path>", "Path to docker-compose.yml", "docker-compose.yml")
+  .description("Provision environment from docker-compose.yml or auto-detect")
+  .option("-f, --file <path>", "Path to docker-compose.yml")
   .option("--region <region>", "Fly.io region", "iad")
   .option("--name <name>", "Override environment name")
-  .action(async (options: { file: string; region: string; name?: string }) => {
+  .action(async (options: { file?: string; region: string; name?: string }) => {
     const config = loadConfig();
     const client = new FlyClient({ token: config.flyApiToken });
+    const projectDir = process.cwd();
+
+    // Detection chain: explicit file > docker-compose.yml > docker-compose.cloudenv.yml > auto-detect
+    let composePath: string;
+    if (options.file) {
+      composePath = path.resolve(options.file);
+    } else {
+      const defaultPath = path.resolve("docker-compose.yml");
+      const cloudenvPath = path.resolve("docker-compose.cloudenv.yml");
+
+      if (fs.existsSync(defaultPath)) {
+        composePath = defaultPath;
+      } else if (fs.existsSync(cloudenvPath)) {
+        composePath = cloudenvPath;
+      } else {
+        // Auto-detect stack
+        const detected = detectStack(projectDir);
+        if (!detected) {
+          console.error(pc.red("Can't detect your project's stack."));
+          console.error(pc.red("Add a Dockerfile or docker-compose.yml and try again."));
+          process.exit(1);
+        }
+
+        const runtimeLabel = detected.runtime === "node" ? "Node.js" : detected.runtime === "python" ? "Python" : "Go";
+        const dbLabels = detected.databases.map((d) => d.type).join(" + ");
+        const detectedLabel = dbLabels ? `${runtimeLabel} ${detected.version} + ${dbLabels}` : `${runtimeLabel} ${detected.version}`;
+        console.log(pc.cyan(`Detected: ${detectedLabel}`));
+
+        if (!checkDockerAvailable()) {
+          console.error(pc.red("Docker is required to build and deploy auto-detected projects. Please install Docker."));
+          process.exit(1);
+        }
+
+        const generated = writeGeneratedFiles(detected, projectDir);
+        composePath = generated.composePath;
+        console.log(pc.dim(`Generated ${path.basename(generated.composePath)}`));
+        if (generated.dockerfilePath) {
+          console.log(pc.dim(`Generated Dockerfile`));
+        }
+        if (generated.dockerignorePath) {
+          console.log(pc.dim(`Generated .dockerignore`));
+        }
+        console.log("");
+      }
+    }
 
     // Parse compose file
-    const composePath = path.resolve(options.file);
     let parsed;
     try {
       parsed = parseComposeFile(composePath);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(pc.red(`Failed to parse ${options.file}: ${msg}`));
+      console.error(pc.red(`Failed to parse compose file: ${msg}`));
       process.exit(1);
     }
 
