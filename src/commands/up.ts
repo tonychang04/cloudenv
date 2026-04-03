@@ -282,11 +282,54 @@ export const upCommand = new Command("up")
       const portOverride = options.port ? Number(options.port) : undefined;
       const machineConfig = toMultiContainerConfig(parsed, options.region, portOverride);
       const machine = await client.createMachine(createdAppName, machineConfig);
-      await client.waitForMachine(createdAppName, machine.id, "started", 60);
 
-      machineSpinner.success({
-        text: `Started ${parsed.services.length} services in one machine — ${machine.private_ip}`,
-      });
+      // Wait for machine, but don't fail hard — check container health on timeout
+      let machineReady = false;
+      try {
+        await client.waitForMachine(createdAppName, machine.id, "started", 60);
+        machineReady = true;
+      } catch {
+        // Timeout or error — check machine state for diagnostics
+      }
+
+      // Get machine status for diagnostics
+      const machines = await client.listMachines(createdAppName);
+      const liveMachine = machines.find((m) => m.id === machine.id);
+      const machineState = liveMachine?.state || "unknown";
+
+      if (machineReady || machineState === "started") {
+        // Check container health
+        const containerStates = (liveMachine as unknown as { containers?: Array<{ name: string; state: string }> })?.containers || [];
+        const unhealthy = containerStates.filter((c) => c.state !== "healthy" && c.state !== "started");
+
+        if (unhealthy.length > 0) {
+          machineSpinner.success({
+            text: `Machine started — ${unhealthy.length} service(s) unhealthy`,
+          });
+          for (const c of unhealthy) {
+            console.warn(pc.yellow(`  ⚠ ${c.name}: ${c.state}`));
+          }
+        } else {
+          machineSpinner.success({
+            text: `Started ${parsed.services.length} services in one machine — ${machine.private_ip}`,
+          });
+        }
+      } else {
+        machineSpinner.error({ text: `Machine failed to start (state: ${machineState})` });
+
+        // Show container diagnostics
+        const containerStates = (liveMachine as unknown as { containers?: Array<{ name: string; state: string; events?: Array<{ type: string; status: string }> }> })?.containers || [];
+        if (containerStates.length > 0) {
+          console.error(pc.red("\nContainer diagnostics:"));
+          for (const c of containerStates) {
+            const lastEvent = c.events?.[c.events.length - 1];
+            const eventInfo = lastEvent ? ` (last event: ${lastEvent.type} → ${lastEvent.status})` : "";
+            console.error(pc.red(`  ${c.name}: ${c.state}${eventInfo}`));
+          }
+        }
+
+        throw new Error(`Machine did not reach started state (got: ${machineState})`);
+      }
 
       // Build env services list (all share the same machine)
       const envServices: EnvRecord["services"] = parsed.services.map((service) => ({
