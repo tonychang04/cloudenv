@@ -11,7 +11,7 @@ import {
   detectPortConflicts,
   preflightCheck,
 } from "../lib/compose";
-import { buildAndPushAsync, checkDockerAvailable } from "../lib/docker";
+import { buildAndPushAsync, checkDockerAvailable, checkFlyctlAvailable } from "../lib/docker";
 import { saveEnv, findEnv, findEnvByBranch, EnvRecord } from "../lib/env-store";
 import { getBranchName, getRepoName } from "../lib/git";
 import { detectStack } from "../lib/detect";
@@ -162,7 +162,7 @@ export const upCommand = new Command("up")
     const needsBuild = parsed.services.some(
       (s) => s.build && (!s.image || !s.image.includes("/"))
     );
-    if (needsBuild && !checkDockerAvailable()) {
+    if (needsBuild && !checkDockerAvailable() && !checkFlyctlAvailable()) {
       const buildServices = parsed.services
         .filter((s) => s.build && (!s.image || !s.image.includes("/")))
         .map((s) => s.name);

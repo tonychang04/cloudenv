@@ -36,9 +36,11 @@ export function buildAndPush(
 ): BuildResult {
   const imageRef = `registry.fly.io/${cacheAppName}:${serviceName}`;
 
-  // Use local Docker build + push to Fly registry.
-  // flyctl remote builders have a known tag mismatch issue where
-  // --image-label doesn't produce pullable tags in the registry.
+  // Prefer flyctl remote builder (native amd64, no QEMU on Apple Silicon)
+  // Note: must NOT use --build-only (doesn't push manifest to registry)
+  if (checkFlyctlAvailable()) {
+    return buildWithFlyctl(serviceName, buildContext, dockerfile, cacheAppName, flyToken, target, buildArgs);
+  }
   return buildWithDocker(serviceName, buildContext, dockerfile, cacheAppName, flyToken, target, buildArgs);
 }
 
@@ -53,9 +55,10 @@ export async function buildAndPushAsync(
 ): Promise<BuildResult> {
   const imageRef = `registry.fly.io/${cacheAppName}:${serviceName}`;
 
-  // Local Docker build (sync) — async wrapper for parallel execution
-  // Each build runs in its own Promise but execFileSync blocks the thread.
-  // For true parallel Docker builds, we'd need worker threads. Good enough for now.
+  if (checkFlyctlAvailable()) {
+    return buildWithFlyctlAsync(serviceName, buildContext, dockerfile, cacheAppName, flyToken, target, buildArgs);
+  }
+  // Local Docker build — sync wrapper (can't parallelize execFileSync)
   return new Promise((resolve, reject) => {
     try {
       resolve(buildAndPush(serviceName, buildContext, dockerfile, cacheAppName, flyToken, target, buildArgs));
@@ -76,9 +79,11 @@ function buildWithFlyctlAsync(
 ): Promise<BuildResult> {
   const imageRef = `registry.fly.io/${cacheAppName}:${serviceName}`;
 
+  // Do NOT use --build-only (it doesn't push the manifest to registry).
+  // Use --ha=false to skip standby machines. We destroy created machines after.
   const args = [
     "deploy", "--app", cacheAppName,
-    "--build-only", "--remote-only",
+    "--remote-only", "--ha=false",
     "--image-label", serviceName,
   ];
   if (dockerfile) args.push("--dockerfile", dockerfile);
@@ -89,7 +94,6 @@ function buildWithFlyctlAsync(
     }
   }
 
-  // fly.toml is managed by up.ts (written once before parallel builds)
   const buildDir = buildContext === "." ? process.cwd() : path.resolve(buildContext);
 
   return new Promise((resolve, reject) => {
@@ -99,8 +103,22 @@ function buildWithFlyctlAsync(
       env: { ...process.env, FLY_API_TOKEN: flyToken },
     });
 
-    child.on("close", (code) => {
+    child.on("close", async (code) => {
       if (code === 0) {
+        // Clean up machines flyctl created on the cache app
+        try {
+          execFileSync("flyctl", ["machines", "list", "--app", cacheAppName, "--json"], {
+            stdio: ["pipe", "pipe", "pipe"],
+            env: { ...process.env, FLY_API_TOKEN: flyToken },
+          });
+          // Destroy any machines on the cache app (we only want the registry images)
+          execFileSync("flyctl", ["machines", "destroy", "--app", cacheAppName, "--force", "--select"], {
+            stdio: ["pipe", "pipe", "pipe"],
+            env: { ...process.env, FLY_API_TOKEN: flyToken },
+          });
+        } catch {
+          // Best effort cleanup — machines on cache app are stopped and cheap
+        }
         resolve({ imageRef });
       } else {
         reject(new Error(`Remote build failed for "${serviceName}" (exit code ${code})`));
@@ -124,12 +142,9 @@ function buildWithFlyctl(
 ): BuildResult {
   const imageRef = `registry.fly.io/${cacheAppName}:${serviceName}`;
 
-  // flyctl deploy --build-only --remote-only builds on Fly's amd64 machines
-  // and pushes to the registry in one step. No local Docker needed for the build.
-  // We use --image-label to tag the image in the registry.
   const args = [
     "deploy", "--app", cacheAppName,
-    "--build-only", "--remote-only",
+    "--remote-only", "--ha=false",
     "--image-label", serviceName,
   ];
   if (dockerfile) args.push("--dockerfile", dockerfile);
@@ -154,6 +169,24 @@ function buildWithFlyctl(
       `Remote build failed for service "${serviceName}": ${error instanceof Error ? error.message : error}`
     );
   }
+
+  // Clean up machines flyctl created on the cache app
+  try {
+    const machinesJson = execFileSync("flyctl", ["machines", "list", "--app", cacheAppName, "--json"], {
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, FLY_API_TOKEN: flyToken },
+      encoding: "utf-8",
+    });
+    const machines = JSON.parse(machinesJson) as Array<{ id: string }>;
+    for (const m of machines) {
+      try {
+        execFileSync("flyctl", ["machines", "destroy", m.id, "--app", cacheAppName, "--force"], {
+          stdio: ["pipe", "pipe", "pipe"],
+          env: { ...process.env, FLY_API_TOKEN: flyToken },
+        });
+      } catch { /* best effort */ }
+    }
+  } catch { /* best effort */ }
 
   return { imageRef };
 }
