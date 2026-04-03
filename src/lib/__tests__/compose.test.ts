@@ -214,7 +214,7 @@ services:
     expect(result.internalServices.map((s) => s.name)).toEqual(["db", "api"]);
   });
 
-  it("warns about unsupported keys", () => {
+  it("warns about unsupported keys but silences volumes/networks", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     parseComposeContent(`
@@ -223,15 +223,22 @@ services:
     image: myapp
     volumes:
       - ./data:/data
+    secrets:
+      - my_secret
 volumes:
   data:
+secrets:
+  my_secret:
+    file: ./secret.txt
 `);
 
+    // Volumes and networks are silently handled, only secrets should warn
     expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining("'volumes'")
+      expect.stringContaining("'secrets'")
     );
-    // Should be called twice: once for top-level, once for service-level
-    expect(warnSpy).toHaveBeenCalledTimes(2);
+    // No volume warnings
+    const volumeWarnings = warnSpy.mock.calls.filter((c) => String(c[0]).includes("'volumes'"));
+    expect(volumeWarnings).toHaveLength(0);
 
     warnSpy.mockRestore();
   });
