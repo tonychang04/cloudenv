@@ -14,6 +14,15 @@ export class FlyApiError extends Error {
   }
 }
 
+export interface FlyHealthcheck {
+  exec?: { command: string[] };
+  interval?: number;
+  timeout?: number;
+  success_threshold?: number;
+  failure_threshold?: number;
+  grace_period?: number;
+}
+
 export interface FlyContainerConfig {
   name: string;
   image: string;
@@ -21,6 +30,7 @@ export interface FlyContainerConfig {
   cmd?: string[];
   files?: Array<{ guest_path: string; raw_value: string }>;
   depends_on?: Array<{ name: string; condition: "started" | "healthy" | "exited_successfully" }>;
+  healthchecks?: FlyHealthcheck[];
 }
 
 export interface CreateMachineRequest {

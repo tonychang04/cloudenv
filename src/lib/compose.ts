@@ -15,6 +15,12 @@ export interface ComposeService {
   ports: Array<{ host: number; container: number }>;
   environment: Record<string, string>;
   command?: string[];
+  healthcheck?: {
+    cmd: string[];
+    interval?: number;
+    timeout?: number;
+    retries?: number;
+  };
   dependsOn: Array<{ service: string; condition: "started" | "healthy" | "exited_successfully" }>;
 }
 
@@ -170,6 +176,7 @@ function parseService(name: string, def: Record<string, unknown>): ComposeServic
     ports: parsePorts(def.ports),
     environment: parseEnvironment(def.environment),
     command: parseCommand(def.command),
+    healthcheck: parseHealthcheck(def.healthcheck),
     dependsOn: parseDependsOn(def.depends_on),
   };
 }
@@ -277,6 +284,47 @@ function parseCommand(cmd: unknown): string[] | undefined {
     return cmd.split(" ");
   }
   return undefined;
+}
+
+function parseHealthcheck(
+  hc: unknown
+): { cmd: string[]; interval?: number; timeout?: number; retries?: number } | undefined {
+  if (!hc || typeof hc !== "object") return undefined;
+  const obj = hc as Record<string, unknown>;
+  const test = obj.test;
+  if (!test) return undefined;
+
+  let cmd: string[];
+  if (Array.isArray(test)) {
+    // ["CMD-SHELL", "pg_isready -U postgres"] or ["CMD", "pg_isready", "-U", "postgres"]
+    const parts = test.map(String);
+    if (parts[0] === "CMD-SHELL") {
+      cmd = ["sh", "-c", parts.slice(1).join(" ")];
+    } else if (parts[0] === "CMD") {
+      cmd = parts.slice(1);
+    } else {
+      cmd = parts;
+    }
+  } else if (typeof test === "string") {
+    cmd = ["sh", "-c", test];
+  } else {
+    return undefined;
+  }
+
+  // Parse durations: "5s" → 5, "30s" → 30
+  const parseDuration = (val: unknown): number | undefined => {
+    if (!val) return undefined;
+    const str = String(val);
+    const match = str.match(/^(\d+)s?$/);
+    return match ? Number(match[1]) : undefined;
+  };
+
+  return {
+    cmd,
+    interval: parseDuration(obj.interval),
+    timeout: parseDuration(obj.timeout),
+    retries: obj.retries ? Number(obj.retries) : undefined,
+  };
 }
 
 function parseDependsOn(deps: unknown): Array<{ service: string; condition: "started" | "healthy" | "exited_successfully" }> {
@@ -434,6 +482,16 @@ export function toMultiContainerConfig(
 
     if (service.command) {
       container.cmd = service.command;
+    }
+
+    if (service.healthcheck) {
+      container.healthchecks = [{
+        exec: { command: service.healthcheck.cmd },
+        interval: service.healthcheck.interval || 5,
+        timeout: service.healthcheck.timeout || 5,
+        failure_threshold: service.healthcheck.retries || 3,
+        grace_period: 10,
+      }];
     }
 
     if (service.dependsOn.length > 0) {
