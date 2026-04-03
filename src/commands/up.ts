@@ -113,13 +113,31 @@ export const upCommand = new Command("up")
     for (const w of warnings) {
       console.warn(pc.yellow(`⚠ ${w.service}: ${w.message}`));
     }
-    if (errors.length > 0) {
+
+    // Auto-skip services with errors instead of blocking the whole deploy
+    const errorServiceNames = new Set(errors.map((e) => e.service));
+    if (errorServiceNames.size > 0) {
       for (const e of errors) {
         console.error(pc.red(`✗ ${e.service}: ${e.message}`));
       }
-      process.exit(1);
+      const skipped = [...errorServiceNames].join(", ");
+      console.log(pc.yellow(`Skipping ${skipped} (will deploy without)`));
+      parsed.services = parsed.services.filter((s) => !errorServiceNames.has(s.name));
+      if (parsed.services.length === 0) {
+        console.error(pc.red("No deployable services remain after skipping."));
+        process.exit(1);
+      }
+      // Recalculate web service after filtering
+      const INFRA_PORTS = new Set([5432, 3306, 6379, 27017, 11211]);
+      parsed.webService = (
+        parsed.services.find((s) => s.build && s.ports.length > 0 && s.ports.some((p) => !INFRA_PORTS.has(p.container)))
+        || parsed.services.find((s) => s.ports.length > 0 && s.ports.some((p) => !INFRA_PORTS.has(p.container)))
+        || parsed.services.find((s) => s.ports.length > 0)
+        || null
+      );
+      parsed.internalServices = parsed.services.filter((s) => s !== parsed.webService);
     }
-    if (warnings.length > 0) {
+    if (issues.length > 0) {
       console.log("");
     }
 
