@@ -175,7 +175,7 @@ export const upCommand = new Command("up")
     }
 
     // Ensure cache app exists for built images (persists across env deploys)
-    const cacheAppName = `ce-cache-${getRepoName()}`.substring(0, 30).replace(/-$/, "");
+    const cacheAppName = `ce-cache-${getRepoName()}`.toLowerCase().replace(/[^a-z0-9-]/g, "-").substring(0, 30).replace(/-$/, "");
     if (needsBuild) {
       try {
         await client.createApp(cacheAppName, config.orgSlug);
