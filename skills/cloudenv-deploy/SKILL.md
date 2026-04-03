@@ -70,8 +70,24 @@ For env vars WITHOUT defaults (`${VAR}` or `$VAR`):
 - If no, ask the user what values to use for critical vars (DB passwords, JWT secrets)
 - For preview environments, generate random secrets: `openssl rand -hex 32`
 
+### Build Args
+If a service has `build.args`, cloudenv passes them to the builder automatically:
+```yaml
+build:
+  args:
+    VITE_API_BASE_URL: ${VITE_API_BASE_URL:-http://localhost:3000}
+```
+cloudenv resolves the `${VAR:-default}` and passes `--build-arg VITE_API_BASE_URL=http://localhost:3000` to the builder. If the arg needs a real value (not a default), set it in the compose file or ask the user.
+
+### Dependency Order
+cloudenv preserves `depends_on` conditions from the compose file:
+- `condition: service_healthy` → Fly waits for healthcheck to pass before starting dependent services
+- `condition: service_started` → Fly starts the dependent as soon as the dependency process is running
+- Image builds run in parallel (no dependency between builds)
+- Container startup follows the dependency graph (postgres healthy → then postgrest + insforge)
+
 ### Docker Socket
-Services mounting `/var/run/docker.sock` CANNOT work on Fly. Skip them with `--skip` or remove from compose.
+Services mounting `/var/run/docker.sock` CANNOT work on Fly. Skip them or remove from compose.
 
 ### Build Targets
 If a service uses `target: dev`, check if a `target: runner` or `target: production` exists in the same Dockerfile. Prefer the production target.
