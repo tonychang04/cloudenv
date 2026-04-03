@@ -302,7 +302,22 @@ export const upCommand = new Command("up")
 
       const portOverride = options.port ? Number(options.port) : undefined;
       const machineConfig = toMultiContainerConfig(parsed, options.region, portOverride);
-      const machine = await client.createMachine(createdAppName, machineConfig);
+      // Retry machine creation (Fly API can have transient failures)
+      let machine;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          machine = await client.createMachine(createdAppName, machineConfig);
+          break;
+        } catch (err) {
+          if (attempt < 2) {
+            console.warn(pc.yellow(`  Machine creation failed, retrying (${attempt + 1}/3)...`));
+            await new Promise((r) => setTimeout(r, 2000));
+          } else {
+            throw err;
+          }
+        }
+      }
+      if (!machine) throw new Error("Machine creation failed after 3 attempts");
 
       // Wait for machine with retry (Fly API caps at 60s per call)
       let machineReady = false;
