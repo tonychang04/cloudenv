@@ -21,7 +21,9 @@ export function buildAndPush(
   flyToken: string,
   target?: string
 ): BuildResult {
-  const imageRef = `registry.fly.io/${appName}/${serviceName}:latest`;
+  // Fly registry format: registry.fly.io/{app-name}:{tag}
+  // Use service name as the tag to distinguish multiple services
+  const imageRef = `registry.fly.io/${appName}:${serviceName}`;
 
   // Build the image
   const dockerfileArgs = dockerfile ? `-f ${dockerfile}` : "";
