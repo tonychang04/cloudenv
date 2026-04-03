@@ -36,12 +36,9 @@ export function buildAndPush(
 ): BuildResult {
   const imageRef = `registry.fly.io/${cacheAppName}:${serviceName}`;
 
-  // Prefer flyctl remote builder (builds on Fly's amd64 hardware, no QEMU)
-  // Falls back to local Docker if flyctl isn't available
-  if (checkFlyctlAvailable()) {
-    return buildWithFlyctl(serviceName, buildContext, dockerfile, cacheAppName, flyToken, target, buildArgs);
-  }
-
+  // Use local Docker build + push to Fly registry.
+  // flyctl remote builders have a known tag mismatch issue where
+  // --image-label doesn't produce pullable tags in the registry.
   return buildWithDocker(serviceName, buildContext, dockerfile, cacheAppName, flyToken, target, buildArgs);
 }
 
@@ -56,12 +53,16 @@ export async function buildAndPushAsync(
 ): Promise<BuildResult> {
   const imageRef = `registry.fly.io/${cacheAppName}:${serviceName}`;
 
-  if (checkFlyctlAvailable()) {
-    return buildWithFlyctlAsync(serviceName, buildContext, dockerfile, cacheAppName, flyToken, target, buildArgs);
-  }
-
-  // Fall back to sync Docker build (can't easily parallelize local Docker)
-  return buildAndPush(serviceName, buildContext, dockerfile, cacheAppName, flyToken, target, buildArgs);
+  // Local Docker build (sync) — async wrapper for parallel execution
+  // Each build runs in its own Promise but execFileSync blocks the thread.
+  // For true parallel Docker builds, we'd need worker threads. Good enough for now.
+  return new Promise((resolve, reject) => {
+    try {
+      resolve(buildAndPush(serviceName, buildContext, dockerfile, cacheAppName, flyToken, target, buildArgs));
+    } catch (err) {
+      reject(err);
+    }
+  });
 }
 
 function buildWithFlyctlAsync(
