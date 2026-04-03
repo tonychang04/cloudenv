@@ -28,16 +28,32 @@ export const upCommand = new Command("up")
     const client = new FlyClient({ token: config.flyApiToken });
     const projectDir = process.cwd();
 
-    // Detection chain: explicit file > docker-compose.yml > docker-compose.cloudenv.yml > auto-detect
+    // Detection chain: explicit file > prod compose > default compose > cloudenv compose > auto-detect
+    // Prefer prod compose files over dev ones (dev files use volume mounts that don't work on Fly)
     let composePath: string;
     if (options.file) {
       composePath = path.resolve(options.file);
     } else {
-      const defaultPath = path.resolve("docker-compose.yml");
+      const prodCandidates = [
+        "docker-compose.prod.yml",
+        "docker-compose.production.yml",
+        "docker-compose.prod.yaml",
+        "docker-compose.production.yaml",
+      ];
+      const defaultCandidates = [
+        "docker-compose.yml",
+        "docker-compose.yaml",
+      ];
       const cloudenvPath = path.resolve("docker-compose.cloudenv.yml");
 
-      if (fs.existsSync(defaultPath)) {
-        composePath = defaultPath;
+      const prodFile = prodCandidates.find((f) => fs.existsSync(path.resolve(f)));
+      const defaultFile = defaultCandidates.find((f) => fs.existsSync(path.resolve(f)));
+
+      if (prodFile) {
+        composePath = path.resolve(prodFile);
+        console.log(pc.cyan(`Using ${prodFile} (production config)`));
+      } else if (defaultFile) {
+        composePath = path.resolve(defaultFile);
       } else if (fs.existsSync(cloudenvPath)) {
         composePath = cloudenvPath;
       } else {
