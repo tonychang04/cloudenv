@@ -247,6 +247,14 @@ export const upCommand = new Command("up")
       });
 
       if (servicesToBuild.length > 0) {
+        // Write fly.toml once for all parallel builds (avoids race condition)
+        const projectDir = process.cwd();
+        const flyTomlPath = path.join(projectDir, "fly.toml");
+        const hadFlyToml = fs.existsSync(flyTomlPath);
+        if (!hadFlyToml) {
+          fs.writeFileSync(flyTomlPath, `app = "${cacheAppName}"\n`);
+        }
+
         const buildNames = servicesToBuild.map((s) => s.name).join(", ");
         const buildSpinner = createSpinner(
           `Building ${servicesToBuild.length} image(s) in parallel (${buildNames})...`
@@ -279,6 +287,11 @@ export const upCommand = new Command("up")
         buildSpinner.success({
           text: `Built ${servicesToBuild.length} image(s)`,
         });
+
+        // Clean up temp fly.toml
+        if (!hadFlyToml && fs.existsSync(flyTomlPath)) {
+          fs.unlinkSync(flyTomlPath);
+        }
       }
 
       // Create single multi-container machine

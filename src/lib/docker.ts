@@ -88,13 +88,8 @@ function buildWithFlyctlAsync(
     }
   }
 
-  // flyctl needs a fly.toml — generate a minimal one in the build context
+  // fly.toml is managed by up.ts (written once before parallel builds)
   const buildDir = buildContext === "." ? process.cwd() : path.resolve(buildContext);
-  const flyTomlPath = path.join(buildDir, "fly.toml");
-  const hadFlyToml = fs.existsSync(flyTomlPath);
-  if (!hadFlyToml) {
-    fs.writeFileSync(flyTomlPath, `app = "${cacheAppName}"\n`);
-  }
 
   return new Promise((resolve, reject) => {
     const child = spawn("flyctl", args, {
@@ -104,10 +99,6 @@ function buildWithFlyctlAsync(
     });
 
     child.on("close", (code) => {
-      // Clean up temp fly.toml
-      if (!hadFlyToml && fs.existsSync(flyTomlPath)) {
-        fs.unlinkSync(flyTomlPath);
-      }
       if (code === 0) {
         resolve({ imageRef });
       } else {
@@ -148,13 +139,8 @@ function buildWithFlyctl(
     }
   }
 
-  // flyctl needs a fly.toml — generate a minimal one in the build context
+  // fly.toml is managed by up.ts (written once before parallel builds)
   const buildDir = buildContext === "." ? process.cwd() : path.resolve(buildContext);
-  const flyTomlPath = path.join(buildDir, "fly.toml");
-  const hadFlyToml = fs.existsSync(flyTomlPath);
-  if (!hadFlyToml) {
-    fs.writeFileSync(flyTomlPath, `app = "${cacheAppName}"\n`);
-  }
 
   try {
     execFileSync("flyctl", args, {
@@ -166,10 +152,6 @@ function buildWithFlyctl(
     throw new Error(
       `Remote build failed for service "${serviceName}": ${error instanceof Error ? error.message : error}`
     );
-  } finally {
-    if (!hadFlyToml && fs.existsSync(flyTomlPath)) {
-      fs.unlinkSync(flyTomlPath);
-    }
   }
 
   return { imageRef };
