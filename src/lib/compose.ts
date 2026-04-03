@@ -10,6 +10,7 @@ export interface ComposeService {
     context: string;
     dockerfile?: string;
     target?: string;
+    args?: Record<string, string>;
   };
   ports: Array<{ host: number; container: number }>;
   environment: Record<string, string>;
@@ -175,7 +176,7 @@ function parseService(name: string, def: Record<string, unknown>): ComposeServic
 
 function parseBuild(
   build: unknown
-): { context: string; dockerfile?: string; target?: string } | undefined {
+): { context: string; dockerfile?: string; target?: string; args?: Record<string, string> } | undefined {
   if (build === undefined || build === null) {
     return undefined;
   }
@@ -184,10 +185,18 @@ function parseBuild(
   }
   if (typeof build === "object") {
     const obj = build as Record<string, unknown>;
+    let args: Record<string, string> | undefined;
+    if (obj.args && typeof obj.args === "object") {
+      args = {};
+      for (const [key, value] of Object.entries(obj.args as Record<string, unknown>)) {
+        args[key] = resolveEnvVar(String(value ?? ""));
+      }
+    }
     return {
       context: (obj.context as string) || ".",
       dockerfile: obj.dockerfile as string | undefined,
       target: obj.target as string | undefined,
+      args,
     };
   }
   return undefined;

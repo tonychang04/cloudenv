@@ -28,17 +28,18 @@ export function buildAndPush(
   dockerfile: string | undefined,
   cacheAppName: string,
   flyToken: string,
-  target?: string
+  target?: string,
+  buildArgs?: Record<string, string>
 ): BuildResult {
   const imageRef = `registry.fly.io/${cacheAppName}:${serviceName}`;
 
   // Prefer flyctl remote builder (builds on Fly's amd64 hardware, no QEMU)
   // Falls back to local Docker if flyctl isn't available
   if (checkFlyctlAvailable()) {
-    return buildWithFlyctl(serviceName, buildContext, dockerfile, cacheAppName, flyToken, target);
+    return buildWithFlyctl(serviceName, buildContext, dockerfile, cacheAppName, flyToken, target, buildArgs);
   }
 
-  return buildWithDocker(serviceName, buildContext, dockerfile, cacheAppName, flyToken, target);
+  return buildWithDocker(serviceName, buildContext, dockerfile, cacheAppName, flyToken, target, buildArgs);
 }
 
 export async function buildAndPushAsync(
@@ -47,16 +48,17 @@ export async function buildAndPushAsync(
   dockerfile: string | undefined,
   cacheAppName: string,
   flyToken: string,
-  target?: string
+  target?: string,
+  buildArgs?: Record<string, string>
 ): Promise<BuildResult> {
   const imageRef = `registry.fly.io/${cacheAppName}:${serviceName}`;
 
   if (checkFlyctlAvailable()) {
-    return buildWithFlyctlAsync(serviceName, buildContext, dockerfile, cacheAppName, flyToken, target);
+    return buildWithFlyctlAsync(serviceName, buildContext, dockerfile, cacheAppName, flyToken, target, buildArgs);
   }
 
   // Fall back to sync Docker build (can't easily parallelize local Docker)
-  return buildAndPush(serviceName, buildContext, dockerfile, cacheAppName, flyToken, target);
+  return buildAndPush(serviceName, buildContext, dockerfile, cacheAppName, flyToken, target, buildArgs);
 }
 
 function buildWithFlyctlAsync(
@@ -65,7 +67,8 @@ function buildWithFlyctlAsync(
   dockerfile: string | undefined,
   cacheAppName: string,
   flyToken: string,
-  target?: string
+  target?: string,
+  buildArgs?: Record<string, string>
 ): Promise<BuildResult> {
   const imageRef = `registry.fly.io/${cacheAppName}:${serviceName}`;
 
@@ -76,6 +79,11 @@ function buildWithFlyctlAsync(
   ];
   if (dockerfile) args.push("--dockerfile", dockerfile);
   if (target) args.push("--build-target", target);
+  if (buildArgs) {
+    for (const [key, value] of Object.entries(buildArgs)) {
+      args.push("--build-arg", `${key}=${value}`);
+    }
+  }
 
   return new Promise((resolve, reject) => {
     const child = spawn("flyctl", args, {
@@ -104,7 +112,8 @@ function buildWithFlyctl(
   dockerfile: string | undefined,
   cacheAppName: string,
   flyToken: string,
-  target?: string
+  target?: string,
+  buildArgs?: Record<string, string>
 ): BuildResult {
   const imageRef = `registry.fly.io/${cacheAppName}:${serviceName}`;
 
@@ -118,6 +127,11 @@ function buildWithFlyctl(
   ];
   if (dockerfile) args.push("--dockerfile", dockerfile);
   if (target) args.push("--build-target", target);
+  if (buildArgs) {
+    for (const [key, value] of Object.entries(buildArgs)) {
+      args.push("--build-arg", `${key}=${value}`);
+    }
+  }
 
   try {
     execFileSync("flyctl", args, {
@@ -140,13 +154,19 @@ function buildWithDocker(
   dockerfile: string | undefined,
   cacheAppName: string,
   flyToken: string,
-  target?: string
+  target?: string,
+  dockerBuildArgs?: Record<string, string>
 ): BuildResult {
   const imageRef = `registry.fly.io/${cacheAppName}:${serviceName}`;
 
   // Build locally for amd64 (Fly runs x86_64)
   const buildArgs = ["build", "--platform", "linux/amd64", "-t", imageRef];
   if (dockerfile) buildArgs.push("-f", dockerfile);
+  if (dockerBuildArgs) {
+    for (const [key, value] of Object.entries(dockerBuildArgs)) {
+      buildArgs.push("--build-arg", `${key}=${value}`);
+    }
+  }
   if (target) buildArgs.push("--target", target);
   buildArgs.push(buildContext);
   try {

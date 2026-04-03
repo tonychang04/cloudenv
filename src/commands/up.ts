@@ -259,7 +259,8 @@ export const upCommand = new Command("up")
             service.build!.dockerfile,
             cacheAppName,
             config.flyApiToken,
-            service.build!.target
+            service.build!.target,
+            service.build!.args
           );
           service.image = result.imageRef;
         });
