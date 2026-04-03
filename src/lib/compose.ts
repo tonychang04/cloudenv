@@ -64,7 +64,21 @@ export function parseComposeContent(content: string): ParsedCompose {
     services.push(service);
   }
 
-  const webService = services.find((s) => s.ports.length > 0) ?? null;
+  // Find the web service using heuristics:
+  // 1. Prefer a service with build: (it's the user's app, not infra)
+  // 2. Skip services whose ports are all well-known infra ports
+  // 3. Fall back to first service with any port
+  const INFRA_PORTS = new Set([5432, 3306, 6379, 27017, 11211, 2181, 9092, 8500, 6443]);
+
+  const webService = (
+    // First: service with build: AND non-infra ports
+    services.find((s) => s.build && s.ports.length > 0 && s.ports.some((p) => !INFRA_PORTS.has(p.container)))
+    // Second: any service with non-infra ports
+    || services.find((s) => s.ports.length > 0 && s.ports.some((p) => !INFRA_PORTS.has(p.container)))
+    // Last resort: first service with any ports
+    || services.find((s) => s.ports.length > 0)
+    || null
+  );
   const internalServices = services.filter((s) => s !== webService);
 
   return { services, webService, internalServices };
