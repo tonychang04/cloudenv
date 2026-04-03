@@ -174,6 +174,19 @@ export const upCommand = new Command("up")
       process.exit(1);
     }
 
+    // Ensure cache app exists for built images (persists across env deploys)
+    const cacheAppName = `ce-cache-${getRepoName()}`.substring(0, 30).replace(/-$/, "");
+    if (needsBuild) {
+      try {
+        await client.createApp(cacheAppName, config.orgSlug);
+      } catch (err) {
+        // 422 = already exists, which is fine (cache app persists)
+        if (!(err instanceof FlyApiError && err.status === 422)) {
+          throw err;
+        }
+      }
+    }
+
     // Create Fly app
     let createdAppName = appName;
     const appSpinner = createSpinner(`Creating Fly app ${pc.bold(appName)}...`).start();
@@ -243,7 +256,7 @@ export const upCommand = new Command("up")
               service.name,
               service.build.context,
               service.build.dockerfile,
-              createdAppName,
+              cacheAppName,
               config.flyApiToken,
               service.build.target
             );

@@ -17,13 +17,13 @@ export function buildAndPush(
   serviceName: string,
   buildContext: string,
   dockerfile: string | undefined,
-  appName: string,
+  cacheAppName: string,
   flyToken: string,
   target?: string
 ): BuildResult {
-  // Fly registry format: registry.fly.io/{app-name}:{tag}
-  // Use service name as the tag to distinguish multiple services
-  const imageRef = `registry.fly.io/${appName}:${serviceName}`;
+  // Push to the cache app's registry so layers persist across env deploys
+  // Format: registry.fly.io/{cache-app}:{service-name}
+  const imageRef = `registry.fly.io/${cacheAppName}:${serviceName}`;
 
   // Build the image
   const dockerfileArgs = dockerfile ? `-f ${dockerfile}` : "";
