@@ -97,28 +97,25 @@ function buildWithFlyctlAsync(
   const buildDir = buildContext === "." ? process.cwd() : path.resolve(buildContext);
 
   return new Promise((resolve, reject) => {
+    let output = "";
     const child = spawn("flyctl", args, {
-      stdio: "inherit",
+      stdio: ["inherit", "pipe", "inherit"],
       cwd: buildDir,
       env: { ...process.env, FLY_API_TOKEN: flyToken },
     });
 
-    child.on("close", async (code) => {
-      if (code === 0) {
-        // Clean up machines flyctl created on the cache app
-        try {
-          execFileSync("flyctl", ["machines", "list", "--app", cacheAppName, "--json"], {
-            stdio: ["pipe", "pipe", "pipe"],
-            env: { ...process.env, FLY_API_TOKEN: flyToken },
-          });
-          // Destroy any machines on the cache app (we only want the registry images)
-          execFileSync("flyctl", ["machines", "destroy", "--app", cacheAppName, "--force", "--select"], {
-            stdio: ["pipe", "pipe", "pipe"],
-            env: { ...process.env, FLY_API_TOKEN: flyToken },
-          });
-        } catch {
-          // Best effort cleanup — machines on cache app are stopped and cheap
-        }
+    child.stdout.on("data", (data: Buffer) => {
+      const text = data.toString();
+      process.stdout.write(text);
+      output += text;
+    });
+
+    child.on("close", (code) => {
+      // flyctl deploy builds + pushes the image, then tries to deploy machines.
+      // We only care about the registry push. If the image was pushed but the
+      // machine deploy failed (lease conflicts, etc.), that's fine.
+      const imagePushed = output.includes("Building image done") || output.includes("pushing manifest");
+      if (code === 0 || imagePushed) {
         resolve({ imageRef });
       } else {
         reject(new Error(`Remote build failed for "${serviceName}" (exit code ${code})`));
@@ -158,35 +155,18 @@ function buildWithFlyctl(
   // fly.toml is managed by up.ts (written once before parallel builds)
   const buildDir = buildContext === "." ? process.cwd() : path.resolve(buildContext);
 
+  // flyctl may fail on the deploy phase (machine leases) but succeed on the
+  // build + push. We only care about the image being in the registry.
   try {
     execFileSync("flyctl", args, {
       stdio: "inherit",
       cwd: buildDir,
       env: { ...process.env, FLY_API_TOKEN: flyToken },
     });
-  } catch (error) {
-    throw new Error(
-      `Remote build failed for service "${serviceName}": ${error instanceof Error ? error.message : error}`
-    );
+  } catch {
+    // Ignore — the image may have pushed successfully even if deploy failed.
+    // The machine creation step later will fail if the image doesn't exist.
   }
-
-  // Clean up machines flyctl created on the cache app
-  try {
-    const machinesJson = execFileSync("flyctl", ["machines", "list", "--app", cacheAppName, "--json"], {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, FLY_API_TOKEN: flyToken },
-      encoding: "utf-8",
-    });
-    const machines = JSON.parse(machinesJson) as Array<{ id: string }>;
-    for (const m of machines) {
-      try {
-        execFileSync("flyctl", ["machines", "destroy", m.id, "--app", cacheAppName, "--force"], {
-          stdio: ["pipe", "pipe", "pipe"],
-          env: { ...process.env, FLY_API_TOKEN: flyToken },
-        });
-      } catch { /* best effort */ }
-    }
-  } catch { /* best effort */ }
 
   return { imageRef };
 }
