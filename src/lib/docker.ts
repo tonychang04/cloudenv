@@ -1,4 +1,7 @@
 import { execSync, execFileSync, spawn } from "child_process";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
 
 export interface BuildResult {
   imageRef: string;
@@ -85,14 +88,26 @@ function buildWithFlyctlAsync(
     }
   }
 
+  // flyctl needs a fly.toml — generate a minimal one in the build context
+  const buildDir = buildContext === "." ? process.cwd() : path.resolve(buildContext);
+  const flyTomlPath = path.join(buildDir, "fly.toml");
+  const hadFlyToml = fs.existsSync(flyTomlPath);
+  if (!hadFlyToml) {
+    fs.writeFileSync(flyTomlPath, `app = "${cacheAppName}"\n`);
+  }
+
   return new Promise((resolve, reject) => {
     const child = spawn("flyctl", args, {
       stdio: "inherit",
-      cwd: buildContext === "." ? undefined : buildContext,
+      cwd: buildDir,
       env: { ...process.env, FLY_API_TOKEN: flyToken },
     });
 
     child.on("close", (code) => {
+      // Clean up temp fly.toml
+      if (!hadFlyToml && fs.existsSync(flyTomlPath)) {
+        fs.unlinkSync(flyTomlPath);
+      }
       if (code === 0) {
         resolve({ imageRef });
       } else {
@@ -133,16 +148,28 @@ function buildWithFlyctl(
     }
   }
 
+  // flyctl needs a fly.toml — generate a minimal one in the build context
+  const buildDir = buildContext === "." ? process.cwd() : path.resolve(buildContext);
+  const flyTomlPath = path.join(buildDir, "fly.toml");
+  const hadFlyToml = fs.existsSync(flyTomlPath);
+  if (!hadFlyToml) {
+    fs.writeFileSync(flyTomlPath, `app = "${cacheAppName}"\n`);
+  }
+
   try {
     execFileSync("flyctl", args, {
       stdio: "inherit",
-      cwd: buildContext === "." ? undefined : buildContext,
+      cwd: buildDir,
       env: { ...process.env, FLY_API_TOKEN: flyToken },
     });
   } catch (error) {
     throw new Error(
       `Remote build failed for service "${serviceName}": ${error instanceof Error ? error.message : error}`
     );
+  } finally {
+    if (!hadFlyToml && fs.existsSync(flyTomlPath)) {
+      fs.unlinkSync(flyTomlPath);
+    }
   }
 
   return { imageRef };
