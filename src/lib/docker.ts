@@ -25,8 +25,8 @@ export function buildAndPush(
   // Format: registry.fly.io/{cache-app}:{service-name}
   const imageRef = `registry.fly.io/${cacheAppName}:${serviceName}`;
 
-  // Build the image (use execFileSync to avoid shell injection)
-  const buildArgs = ["build", "-t", imageRef];
+  // Build the image for amd64 (Fly runs x86_64, not arm64)
+  const buildArgs = ["build", "--platform", "linux/amd64", "-t", imageRef];
   if (dockerfile) buildArgs.push("-f", dockerfile);
   if (target) buildArgs.push("--target", target);
   buildArgs.push(buildContext);
