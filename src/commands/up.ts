@@ -93,7 +93,10 @@ export const upCommand = new Command("up")
     const ipSpinner = createSpinner("Allocating IP addresses...").start();
     try {
       const v6 = await client.allocateIpAddress(createdAppName, "v6");
-      const v4 = await client.allocateIpAddress(createdAppName, "shared_v4");
+      let v4 = await client.allocateIpAddress(createdAppName, "shared_v4");
+      if (!v4) {
+        v4 = await client.allocateIpAddress(createdAppName, "v4");
+      }
       const allocated = [v6, v4].filter(Boolean).map((ip) => ip!.address);
       ipSpinner.success({ text: `Allocated IPs: ${allocated.join(", ")}` });
     } catch (err) {
