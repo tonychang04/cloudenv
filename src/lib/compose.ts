@@ -25,6 +25,73 @@ export interface ParsedCompose {
 
 const UNSUPPORTED_KEYS = ["volumes", "networks", "profiles", "secrets", "configs"];
 
+export interface PreflightIssue {
+  level: "error" | "warning";
+  service: string;
+  message: string;
+}
+
+export function preflightCheck(content: string): PreflightIssue[] {
+  const doc = yaml.load(content) as Record<string, unknown>;
+  if (!doc || !doc.services) return [];
+
+  const servicesObj = doc.services as Record<string, Record<string, unknown>>;
+  const issues: PreflightIssue[] = [];
+
+  for (const [name, def] of Object.entries(servicesObj)) {
+    // Check for local path volume mounts (./path:/container/path)
+    const volumes = def.volumes as unknown[] | undefined;
+    if (volumes && Array.isArray(volumes)) {
+      for (const v of volumes) {
+        const vol = String(v);
+        if (vol.startsWith("./") || vol.startsWith("../") || vol.startsWith("/")) {
+          // Local bind mount — won't work on Fly
+          const hostPath = vol.split(":")[0];
+          issues.push({
+            level: "warning",
+            service: name,
+            message: `Bind mount '${hostPath}' won't be available on Fly (no local filesystem). Service may fail if it depends on these files.`,
+          });
+        }
+      }
+    }
+
+    // Check for build target "dev" — likely needs volume mounts
+    const build = def.build as Record<string, unknown> | string | undefined;
+    if (build && typeof build === "object" && build.target === "dev") {
+      issues.push({
+        level: "warning",
+        service: name,
+        message: `Build target is 'dev' which typically expects volume-mounted source code. Consider using a production target or docker-compose.prod.yml.`,
+      });
+    }
+
+    // Check for no image and no build
+    if (!def.image && !def.build) {
+      issues.push({
+        level: "error",
+        service: name,
+        message: `No 'image' or 'build' field. Cannot deploy this service.`,
+      });
+    }
+
+    // Check for docker.sock mount (won't work in Fly microVM)
+    if (volumes && Array.isArray(volumes)) {
+      for (const v of volumes) {
+        if (String(v).includes("docker.sock")) {
+          issues.push({
+            level: "error",
+            service: name,
+            message: `Mounts docker.sock which is not available in Fly microVMs. This service will fail.`,
+          });
+        }
+      }
+    }
+  }
+
+  return issues;
+}
+
 export function parseComposeFile(filePath: string): ParsedCompose {
   const content = fs.readFileSync(filePath, "utf-8");
   return parseComposeContent(content);

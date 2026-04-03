@@ -9,6 +9,7 @@ import {
   generateAppName,
   toMultiContainerConfig,
   detectPortConflicts,
+  preflightCheck,
 } from "../lib/compose";
 import { buildAndPush, checkDockerAvailable } from "../lib/docker";
 import { saveEnv, findEnv, findEnvByBranch, EnvRecord } from "../lib/env-store";
@@ -96,6 +97,30 @@ export const upCommand = new Command("up")
       const msg = err instanceof Error ? err.message : String(err);
       console.error(pc.red(`Failed to parse compose file: ${msg}`));
       process.exit(1);
+    }
+
+    // Preflight check — scan for issues before creating any Fly resources
+    let composeContent: string;
+    try {
+      composeContent = fs.readFileSync(composePath, "utf-8");
+    } catch {
+      composeContent = "";
+    }
+    const issues = preflightCheck(composeContent);
+    const errors = issues.filter((i) => i.level === "error");
+    const warnings = issues.filter((i) => i.level === "warning");
+
+    for (const w of warnings) {
+      console.warn(pc.yellow(`⚠ ${w.service}: ${w.message}`));
+    }
+    if (errors.length > 0) {
+      for (const e of errors) {
+        console.error(pc.red(`✗ ${e.service}: ${e.message}`));
+      }
+      process.exit(1);
+    }
+    if (warnings.length > 0) {
+      console.log("");
     }
 
     // Determine app name

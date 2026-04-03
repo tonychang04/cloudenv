@@ -19,6 +19,24 @@ vi.mock("../../lib/git", () => ({
   getRepoName: () => "test-repo",
 }));
 
+vi.mock("fs", async () => {
+  const actual = await vi.importActual("fs");
+  return {
+    ...(actual as object),
+    readFileSync: (...args: unknown[]) => {
+      const filePath = String(args[0]);
+      if (filePath.includes("docker-compose")) {
+        return "services:\n  web:\n    image: nginx\n";
+      }
+      return (actual as { readFileSync: Function }).readFileSync(...args);
+    },
+    existsSync: (p: unknown) => {
+      if (String(p).includes("docker-compose")) return true;
+      return (actual as { existsSync: Function }).existsSync(p);
+    },
+  };
+});
+
 vi.mock("../../lib/env-store", () => ({
   findEnv: (...args: unknown[]) => mockFindEnv(...args),
   findEnvByBranch: (...args: unknown[]) => mockFindEnvByBranch(...args),
@@ -89,6 +107,7 @@ vi.mock("../../lib/compose", () => ({
     },
   }),
   detectPortConflicts: () => {},
+  preflightCheck: () => [],
 }));
 
 describe("up command", () => {
