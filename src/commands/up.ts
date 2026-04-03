@@ -163,8 +163,13 @@ export const upCommand = new Command("up")
 
     try {
       // Build images for services with build: context
+      // If a service has both build: and image:, but the image looks local
+      // (no registry prefix like ghcr.io/ or docker.io/), treat it as needing a build
       for (const service of parsed.services) {
-        if (service.build && !service.image) {
+        const needsBuildStep = service.build && (
+          !service.image || !service.image.includes("/")
+        );
+        if (needsBuildStep && service.build) {
           const buildSpinner = createSpinner(
             `Building image for ${pc.bold(service.name)}...`
           ).start();
