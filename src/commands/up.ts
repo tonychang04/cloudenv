@@ -11,7 +11,7 @@ import {
   detectPortConflicts,
   preflightCheck,
 } from "../lib/compose";
-import { buildAndPush, checkDockerAvailable, checkFlyctlAvailable } from "../lib/docker";
+import { buildAndPushAsync, checkDockerAvailable, checkFlyctlAvailable } from "../lib/docker";
 import { saveEnv, findEnv, findEnvByBranch, EnvRecord } from "../lib/env-store";
 import { getBranchName, getRepoName } from "../lib/git";
 import { detectStack } from "../lib/detect";
@@ -240,37 +240,44 @@ export const upCommand = new Command("up")
     }
 
     try {
-      // Build images for services with build: context
-      // If a service has both build: and image:, but the image looks local
-      // (no registry prefix like ghcr.io/ or docker.io/), treat it as needing a build
-      for (const service of parsed.services) {
-        const needsBuildStep = service.build && (
-          !service.image || !service.image.includes("/")
-        );
-        if (needsBuildStep && service.build) {
-          const buildSpinner = createSpinner(
-            `Building image for ${pc.bold(service.name)}...`
-          ).start();
-          try {
-            const result = buildAndPush(
-              service.name,
-              service.build.context,
-              service.build.dockerfile,
-              cacheAppName,
-              config.flyApiToken,
-              service.build.target
-            );
-            service.image = result.imageRef;
-            buildSpinner.success({
-              text: `Built image for ${pc.bold(service.name)}`,
-            });
-          } catch (err) {
-            buildSpinner.error({
-              text: `Failed to build ${service.name}`,
-            });
-            throw err;
+      // Build images in PARALLEL for services that need it
+      const servicesToBuild = parsed.services.filter((s) => {
+        const needsBuild = s.build && (!s.image || !s.image.includes("/"));
+        return needsBuild && s.build;
+      });
+
+      if (servicesToBuild.length > 0) {
+        const buildNames = servicesToBuild.map((s) => s.name).join(", ");
+        const buildSpinner = createSpinner(
+          `Building ${servicesToBuild.length} image(s) in parallel (${buildNames})...`
+        ).start();
+
+        const buildPromises = servicesToBuild.map(async (service) => {
+          const result = await buildAndPushAsync(
+            service.name,
+            service.build!.context,
+            service.build!.dockerfile,
+            cacheAppName,
+            config.flyApiToken,
+            service.build!.target
+          );
+          service.image = result.imageRef;
+        });
+
+        const results = await Promise.allSettled(buildPromises);
+        const failures = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+
+        if (failures.length > 0) {
+          buildSpinner.error({ text: `${failures.length} build(s) failed` });
+          for (const f of failures) {
+            console.error(pc.red(`  ${f.reason}`));
           }
+          throw new Error("Image builds failed");
         }
+
+        buildSpinner.success({
+          text: `Built ${servicesToBuild.length} image(s)`,
+        });
       }
 
       // Create single multi-container machine

@@ -1,4 +1,4 @@
-import { execSync, execFileSync } from "child_process";
+import { execSync, execFileSync, spawn } from "child_process";
 
 export interface BuildResult {
   imageRef: string;
@@ -39,6 +39,63 @@ export function buildAndPush(
   }
 
   return buildWithDocker(serviceName, buildContext, dockerfile, cacheAppName, flyToken, target);
+}
+
+export async function buildAndPushAsync(
+  serviceName: string,
+  buildContext: string,
+  dockerfile: string | undefined,
+  cacheAppName: string,
+  flyToken: string,
+  target?: string
+): Promise<BuildResult> {
+  const imageRef = `registry.fly.io/${cacheAppName}:${serviceName}`;
+
+  if (checkFlyctlAvailable()) {
+    return buildWithFlyctlAsync(serviceName, buildContext, dockerfile, cacheAppName, flyToken, target);
+  }
+
+  // Fall back to sync Docker build (can't easily parallelize local Docker)
+  return buildAndPush(serviceName, buildContext, dockerfile, cacheAppName, flyToken, target);
+}
+
+function buildWithFlyctlAsync(
+  serviceName: string,
+  buildContext: string,
+  dockerfile: string | undefined,
+  cacheAppName: string,
+  flyToken: string,
+  target?: string
+): Promise<BuildResult> {
+  const imageRef = `registry.fly.io/${cacheAppName}:${serviceName}`;
+
+  const args = [
+    "deploy", "--app", cacheAppName,
+    "--build-only", "--remote-only",
+    "--image-label", serviceName,
+  ];
+  if (dockerfile) args.push("--dockerfile", dockerfile);
+  if (target) args.push("--build-target", target);
+
+  return new Promise((resolve, reject) => {
+    const child = spawn("flyctl", args, {
+      stdio: "inherit",
+      cwd: buildContext === "." ? undefined : buildContext,
+      env: { ...process.env, FLY_API_TOKEN: flyToken },
+    });
+
+    child.on("close", (code) => {
+      if (code === 0) {
+        resolve({ imageRef });
+      } else {
+        reject(new Error(`Remote build failed for "${serviceName}" (exit code ${code})`));
+      }
+    });
+
+    child.on("error", (err) => {
+      reject(new Error(`Remote build failed for "${serviceName}": ${err.message}`));
+    });
+  });
 }
 
 function buildWithFlyctl(
