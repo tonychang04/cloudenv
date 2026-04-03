@@ -22,7 +22,8 @@ export const upCommand = new Command("up")
   .option("-f, --file <path>", "Path to docker-compose.yml")
   .option("--region <region>", "Fly.io region", "iad")
   .option("--name <name>", "Override environment name")
-  .action(async (options: { file?: string; region: string; name?: string }) => {
+  .option("--port <port>", "Override the public-facing port (e.g., 7132)")
+  .action(async (options: { file?: string; region: string; name?: string; port?: string }) => {
     const config = loadConfig();
     const client = new FlyClient({ token: config.flyApiToken });
     const projectDir = process.cwd();
@@ -206,7 +207,8 @@ export const upCommand = new Command("up")
         `Starting services (${serviceNames})...`
       ).start();
 
-      const machineConfig = toMultiContainerConfig(parsed, options.region);
+      const portOverride = options.port ? Number(options.port) : undefined;
+      const machineConfig = toMultiContainerConfig(parsed, options.region, portOverride);
       const machine = await client.createMachine(createdAppName, machineConfig);
       await client.waitForMachine(createdAppName, machine.id, "started", 60);
 

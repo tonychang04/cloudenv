@@ -326,7 +326,8 @@ export interface MultiContainerMachineConfig {
 
 export function toMultiContainerConfig(
   parsed: ParsedCompose,
-  region?: string
+  region?: string,
+  portOverride?: number
 ): MultiContainerMachineConfig {
   const serviceNames = parsed.services.map((s) => s.name);
   const hostsBase64 = generateHostsFileBase64(serviceNames);
@@ -367,11 +368,16 @@ export function toMultiContainerConfig(
   };
 
   // Add HTTP/HTTPS services for the web-facing container
-  if (parsed.webService && parsed.webService.ports.length > 0) {
+  // Port override takes priority, then auto-detected web service port
+  const webPort = portOverride
+    || (parsed.webService?.ports[0]?.container)
+    || undefined;
+
+  if (webPort) {
     machineConfig.config.services = [
       {
         protocol: "tcp",
-        internal_port: parsed.webService.ports[0].container,
+        internal_port: webPort,
         ports: [
           { port: 80, handlers: ["http"], force_https: true },
           { port: 443, handlers: ["tls", "http"] },
