@@ -6,6 +6,7 @@ const mockWaitForMachine = vi.fn();
 const mockDeleteMachine = vi.fn();
 const mockDeleteApp = vi.fn();
 const mockAllocateIpAddress = vi.fn();
+const mockListMachines = vi.fn();
 const mockSaveEnv = vi.fn();
 const mockFindEnv = vi.fn();
 const mockFindEnvByBranch = vi.fn();
@@ -69,6 +70,7 @@ vi.mock("../../lib/fly-client", () => {
       deleteMachine: (...args: unknown[]) => mockDeleteMachine(...args),
       deleteApp: (...args: unknown[]) => mockDeleteApp(...args),
       allocateIpAddress: (...args: unknown[]) => mockAllocateIpAddress(...args),
+      listMachines: (...args: unknown[]) => mockListMachines(...args),
     })),
     FlyApiError,
   };
@@ -128,6 +130,12 @@ describe("up command", () => {
     mockDeleteMachine.mockResolvedValue(undefined);
     mockDeleteApp.mockResolvedValue(undefined);
     mockAllocateIpAddress.mockResolvedValue({ id: "ip1", address: "2a09::1", type: "v6" });
+    mockListMachines.mockResolvedValue([{
+      id: "mach1", name: "web", state: "started", region: "iad",
+      instance_id: "inst1", private_ip: "fdaa::1",
+      config: { image: "nginx" }, created_at: new Date().toISOString(),
+      containers: [{ name: "web", state: "healthy" }],
+    }]);
   });
 
   it("creates Fly app and machine for a single-service compose", async () => {
