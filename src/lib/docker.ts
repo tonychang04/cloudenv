@@ -1,4 +1,4 @@
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 
 export interface BuildResult {
   imageRef: string;
@@ -25,22 +25,22 @@ export function buildAndPush(
   // Format: registry.fly.io/{cache-app}:{service-name}
   const imageRef = `registry.fly.io/${cacheAppName}:${serviceName}`;
 
-  // Build the image
-  const dockerfileArgs = dockerfile ? `-f ${dockerfile}` : "";
-  const targetArgs = target ? `--target ${target}` : "";
+  // Build the image (use execFileSync to avoid shell injection)
+  const buildArgs = ["build", "-t", imageRef];
+  if (dockerfile) buildArgs.push("-f", dockerfile);
+  if (target) buildArgs.push("--target", target);
+  buildArgs.push(buildContext);
   try {
-    execSync(`docker build -t ${imageRef} ${dockerfileArgs} ${targetArgs} ${buildContext}`, {
-      stdio: "inherit",
-    });
+    execFileSync("docker", buildArgs, { stdio: "inherit" });
   } catch (error) {
     throw new Error(
       `Docker build failed for service "${serviceName}": ${error instanceof Error ? error.message : error}`
     );
   }
 
-  // Login to Fly registry
+  // Login to Fly registry (use execSync for stdin pipe support)
   try {
-    execSync(`docker login registry.fly.io -u x --password-stdin`, {
+    execSync("docker login registry.fly.io -u x --password-stdin", {
       input: flyToken,
       stdio: ["pipe", "inherit", "inherit"],
     });
@@ -52,9 +52,7 @@ export function buildAndPush(
 
   // Push the image
   try {
-    execSync(`docker push ${imageRef}`, {
-      stdio: "inherit",
-    });
+    execFileSync("docker", ["push", imageRef], { stdio: "inherit" });
   } catch (error) {
     throw new Error(
       `Docker push failed for "${imageRef}": ${error instanceof Error ? error.message : error}`

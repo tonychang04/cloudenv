@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 import pc from "picocolors";
 import { findEnv } from "../lib/env-store";
 
@@ -30,7 +30,7 @@ export const logsCommand = new Command("logs")
     if (hasFlyctl()) {
       try {
         console.log(pc.dim(`Streaming logs from ${env}...\n`));
-        execSync(`flyctl logs -a ${env}`, {
+        execFileSync("flyctl", ["logs", "-a", env], {
           stdio: "inherit",
           encoding: "utf-8",
         });
@@ -54,7 +54,7 @@ export const logsCommand = new Command("logs")
 
 function hasFlyctl(): boolean {
   try {
-    execSync("flyctl version", {
+    execFileSync("flyctl", ["version"], {
       stdio: ["pipe", "pipe", "pipe"],
       encoding: "utf-8",
     });
