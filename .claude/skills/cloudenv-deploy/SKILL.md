@@ -11,14 +11,21 @@ You are deploying this project to Fly.io using the `cloudenv` CLI. Your job is t
 
 - `cloudenv` CLI must be installed (`npm install -g cloudenv`)
 - User must be logged in (`cloudenv login --token <fly-api-token>`)
-- Docker must be running if any service needs to be built
+- `flyctl` installed (preferred, builds remotely on Fly's hardware, fast) OR Docker running (fallback, builds locally, slower on Apple Silicon)
 
 Check prerequisites:
 ```bash
 which cloudenv || echo "MISSING: run npm install -g cloudenv"
 cloudenv list 2>&1 | head -1 || echo "MISSING: run cloudenv login"
-docker info >/dev/null 2>&1 || echo "WARNING: Docker not running (needed for build: services)"
+which flyctl && echo "flyctl: OK (remote builds, fast)" || echo "flyctl: not found"
+docker info >/dev/null 2>&1 && echo "docker: OK (local builds, fallback)" || echo "docker: not running"
+# Need at least one of flyctl or docker for services with build:
 ```
+
+**Build path selection (automatic):**
+- `flyctl` installed → builds on Fly's amd64 machines (~30s, no QEMU)
+- Only Docker → builds locally with `--platform linux/amd64` (slow on Apple Silicon, ~5-10min first time)
+- Neither → errors if any service needs building. Services with `image:` still work.
 
 ## Step 1: Find the Right Compose File
 
