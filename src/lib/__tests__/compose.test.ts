@@ -4,6 +4,8 @@ import {
   parseComposeFile,
   parseComposeContent,
   toFlyMachineConfig,
+  toMultiContainerConfig,
+  detectPortConflicts,
   generateAppName,
 } from "../compose";
 
@@ -304,5 +306,168 @@ describe("toFlyMachineConfig", () => {
       cloudenv: "true",
       service: "worker",
     });
+  });
+});
+
+describe("toMultiContainerConfig", () => {
+  it("maps all services to containers array", () => {
+    const parsed = parseComposeContent(`
+services:
+  web:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: secret
+  redis:
+    image: redis:7-alpine
+`);
+    const result = toMultiContainerConfig(parsed, "iad");
+
+    expect(result.config.containers).toHaveLength(3);
+    expect(result.config.containers[0].name).toBe("web");
+    expect(result.config.containers[0].image).toBe("nginx:alpine");
+    expect(result.config.containers[1].name).toBe("db");
+    expect(result.config.containers[1].image).toBe("postgres:16");
+    expect(result.config.containers[1].env).toEqual({ POSTGRES_PASSWORD: "secret" });
+    expect(result.config.containers[2].name).toBe("redis");
+    expect(result.config.containers[2].image).toBe("redis:7-alpine");
+  });
+
+  it("injects /etc/hosts into every container", () => {
+    const parsed = parseComposeContent(`
+services:
+  web:
+    image: nginx
+    ports:
+      - "80:80"
+  db:
+    image: postgres:16
+`);
+    const result = toMultiContainerConfig(parsed);
+
+    for (const container of result.config.containers) {
+      expect(container.files).toHaveLength(1);
+      expect(container.files![0].guest_path).toBe("/etc/hosts");
+      const decoded = Buffer.from(container.files![0].raw_value, "base64").toString("utf-8");
+      expect(decoded).toContain("127.0.0.1 web");
+      expect(decoded).toContain("127.0.0.1 db");
+    }
+  });
+
+  it("sets HTTP/HTTPS services for web service", () => {
+    const parsed = parseComposeContent(`
+services:
+  web:
+    image: nginx
+    ports:
+      - "3000:3000"
+  db:
+    image: postgres:16
+`);
+    const result = toMultiContainerConfig(parsed);
+
+    expect(result.config.services).toHaveLength(1);
+    expect(result.config.services![0].internal_port).toBe(3000);
+    expect(result.config.services![0].ports).toHaveLength(2);
+  });
+
+  it("maps depends_on to container dependencies", () => {
+    const parsed = parseComposeContent(`
+services:
+  web:
+    image: nginx
+    ports:
+      - "80:80"
+    depends_on:
+      - db
+  db:
+    image: postgres:16
+`);
+    const result = toMultiContainerConfig(parsed);
+    const webContainer = result.config.containers.find((c) => c.name === "web")!;
+
+    expect(webContainer.depends_on).toEqual([
+      { name: "db", condition: "started" },
+    ]);
+  });
+
+  it("sets guest resources to shared-cpu-2x with 2048MB", () => {
+    const parsed = parseComposeContent(`
+services:
+  web:
+    image: nginx
+    ports:
+      - "80:80"
+`);
+    const result = toMultiContainerConfig(parsed);
+
+    expect(result.config.guest).toEqual({
+      cpu_kind: "shared",
+      cpus: 2,
+      memory_mb: 2048,
+    });
+  });
+
+  it("passes command as cmd array", () => {
+    const parsed = parseComposeContent(`
+services:
+  app:
+    image: myapp
+    command: ["node", "server.js"]
+    ports:
+      - "3000:3000"
+`);
+    const result = toMultiContainerConfig(parsed);
+
+    expect(result.config.containers[0].cmd).toEqual(["node", "server.js"]);
+  });
+
+  it("sets region when provided", () => {
+    const parsed = parseComposeContent(`
+services:
+  web:
+    image: nginx
+    ports:
+      - "80:80"
+`);
+    const result = toMultiContainerConfig(parsed, "lax");
+    expect(result.region).toBe("lax");
+  });
+});
+
+describe("detectPortConflicts", () => {
+  it("passes when no conflicts exist", () => {
+    const services = [
+      { name: "web", image: "nginx", ports: [{ host: 80, container: 80 }], environment: {}, dependsOn: [] },
+      { name: "db", image: "postgres:16", ports: [], environment: {}, dependsOn: [] },
+    ];
+    expect(() => detectPortConflicts(services)).not.toThrow();
+  });
+
+  it("throws when two services declare the same port", () => {
+    const services = [
+      { name: "web", image: "nginx", ports: [{ host: 3000, container: 3000 }], environment: {}, dependsOn: [] },
+      { name: "api", image: "myapi", ports: [{ host: 3000, container: 3000 }], environment: {}, dependsOn: [] },
+    ];
+    expect(() => detectPortConflicts(services)).toThrow("web and api both listen on port 3000");
+  });
+
+  it("detects well-known default ports for postgres images", () => {
+    const services = [
+      { name: "db1", image: "postgres:16", ports: [], environment: {}, dependsOn: [] },
+      { name: "db2", image: "postgres:15", ports: [], environment: {}, dependsOn: [] },
+    ];
+    expect(() => detectPortConflicts(services)).toThrow("db1 and db2 both listen on port 5432");
+  });
+
+  it("detects well-known default ports for redis images", () => {
+    const services = [
+      { name: "cache1", image: "redis:7", ports: [], environment: {}, dependsOn: [] },
+      { name: "cache2", image: "redis:6", ports: [], environment: {}, dependsOn: [] },
+    ];
+    expect(() => detectPortConflicts(services)).toThrow("cache1 and cache2 both listen on port 6379");
   });
 });

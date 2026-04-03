@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as yaml from "js-yaml";
-import type { CreateMachineRequest, FlyService } from "./fly-client";
+import type { CreateMachineRequest, FlyService, FlyContainerConfig } from "./fly-client";
+import { generateHostsFileBase64 } from "./hosts";
 
 export interface ComposeService {
   name: string;
@@ -236,6 +237,131 @@ export function toFlyMachineConfig(
   }
 
   return request;
+}
+
+// Well-known default ports for common database images
+const WELL_KNOWN_PORTS: Record<string, number> = {
+  postgres: 5432,
+  mysql: 3306,
+  mariadb: 3306,
+  redis: 6379,
+  mongo: 27017,
+  memcached: 11211,
+};
+
+function getDefaultPort(image: string | undefined): number | undefined {
+  if (!image) return undefined;
+  const imageName = image.split(":")[0].split("/").pop() || "";
+  return WELL_KNOWN_PORTS[imageName];
+}
+
+export function detectPortConflicts(services: ComposeService[]): void {
+  const portMap = new Map<number, string[]>();
+
+  for (const service of services) {
+    const ports = new Set<number>();
+
+    // Explicit ports
+    for (const p of service.ports) {
+      ports.add(p.container);
+    }
+
+    // Well-known default ports based on image name
+    const defaultPort = getDefaultPort(service.image);
+    if (defaultPort) {
+      ports.add(defaultPort);
+    }
+
+    for (const port of ports) {
+      const existing = portMap.get(port) || [];
+      existing.push(service.name);
+      portMap.set(port, existing);
+    }
+  }
+
+  for (const [port, serviceNames] of portMap) {
+    if (serviceNames.length > 1) {
+      throw new Error(
+        `Services ${serviceNames.join(" and ")} both listen on port ${port}. ` +
+        `This is not supported in single-machine mode.`
+      );
+    }
+  }
+}
+
+export interface MultiContainerMachineConfig {
+  region?: string;
+  config: {
+    image: string;
+    guest: { cpu_kind: string; cpus: number; memory_mb: number };
+    services?: FlyService[];
+    restart: { policy: string };
+    metadata: Record<string, string>;
+    containers: FlyContainerConfig[];
+  };
+}
+
+export function toMultiContainerConfig(
+  parsed: ParsedCompose,
+  region?: string
+): MultiContainerMachineConfig {
+  const serviceNames = parsed.services.map((s) => s.name);
+  const hostsBase64 = generateHostsFileBase64(serviceNames);
+
+  const containers: FlyContainerConfig[] = parsed.services.map((service) => {
+    const container: FlyContainerConfig = {
+      name: service.name.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, ""),
+      image: service.image || "",
+      files: [{ guest_path: "/etc/hosts", raw_value: hostsBase64 }],
+    };
+
+    if (Object.keys(service.environment).length > 0) {
+      container.env = service.environment;
+    }
+
+    if (service.command) {
+      container.cmd = service.command;
+    }
+
+    if (service.dependsOn.length > 0) {
+      container.depends_on = service.dependsOn.map((dep) => ({
+        name: dep,
+        condition: "started" as const,
+      }));
+    }
+
+    return container;
+  });
+
+  const machineConfig: MultiContainerMachineConfig = {
+    config: {
+      image: parsed.webService?.image || parsed.services[0].image || "",
+      guest: { cpu_kind: "shared", cpus: 2, memory_mb: 2048 },
+      restart: { policy: "on-failure" },
+      metadata: { cloudenv: "true" },
+      containers,
+    },
+  };
+
+  // Add HTTP/HTTPS services for the web-facing container
+  if (parsed.webService && parsed.webService.ports.length > 0) {
+    machineConfig.config.services = [
+      {
+        protocol: "tcp",
+        internal_port: parsed.webService.ports[0].container,
+        ports: [
+          { port: 80, handlers: ["http"], force_https: true },
+          { port: 443, handlers: ["tls", "http"] },
+        ],
+      },
+    ];
+  }
+
+  if (region) {
+    machineConfig.region = region;
+  }
+
+  return machineConfig;
 }
 
 export function generateAppName(repo: string, branch: string): string {

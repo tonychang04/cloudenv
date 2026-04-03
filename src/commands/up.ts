@@ -7,8 +7,8 @@ import { FlyClient, FlyApiError } from "../lib/fly-client";
 import {
   parseComposeFile,
   generateAppName,
-  toFlyMachineConfig,
-  ComposeService,
+  toMultiContainerConfig,
+  detectPortConflicts,
 } from "../lib/compose";
 import { buildAndPush, checkDockerAvailable } from "../lib/docker";
 import { saveEnv, findEnv, findEnvByBranch, EnvRecord } from "../lib/env-store";
@@ -102,8 +102,14 @@ export const upCommand = new Command("up")
       process.exit(1);
     }
 
-    // Track created machines for cleanup on failure
-    const createdMachineIds: string[] = [];
+    // Check for port conflicts before provisioning
+    try {
+      detectPortConflicts(parsed.services);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(pc.red(msg));
+      process.exit(1);
+    }
 
     try {
       // Build images for services with build: context
@@ -133,47 +139,28 @@ export const upCommand = new Command("up")
         }
       }
 
-      // Order services: web first, then by depends_on
-      const orderedServices = orderServices(parsed.services, parsed.webService);
+      // Create single multi-container machine
+      const serviceNames = parsed.services.map((s) => s.name).join(", ");
+      const machineSpinner = createSpinner(
+        `Starting services (${serviceNames})...`
+      ).start();
 
-      // Create machines
-      const envServices: EnvRecord["services"] = [];
+      const machineConfig = toMultiContainerConfig(parsed, options.region);
+      const machine = await client.createMachine(createdAppName, machineConfig);
+      await client.waitForMachine(createdAppName, machine.id, "started", 60);
 
-      for (const service of orderedServices) {
-        const isWeb = parsed.webService?.name === service.name;
-        const machineSpinner = createSpinner(
-          `Starting ${pc.bold(service.name)}${isWeb ? " (web)" : ""}...`
-        ).start();
+      machineSpinner.success({
+        text: `Started ${parsed.services.length} services in one machine — ${machine.private_ip}`,
+      });
 
-        const machineConfig = toFlyMachineConfig(
-          service,
-          createdAppName,
-          isWeb,
-          options.region
-        );
-
-        try {
-          const machine = await client.createMachine(createdAppName, machineConfig);
-          createdMachineIds.push(machine.id);
-
-          await client.waitForMachine(createdAppName, machine.id, "started", 60);
-
-          envServices.push({
-            name: service.name,
-            machineId: machine.id,
-            image: service.image || "",
-            privateIp: machine.private_ip,
-            isWeb,
-          });
-
-          machineSpinner.success({
-            text: `Started ${pc.bold(service.name)}${isWeb ? " (web)" : ""} — ${machine.private_ip}`,
-          });
-        } catch (err) {
-          machineSpinner.error({ text: `Failed to start ${service.name}` });
-          throw err;
-        }
-      }
+      // Build env services list (all share the same machine)
+      const envServices: EnvRecord["services"] = parsed.services.map((service) => ({
+        name: service.name,
+        machineId: machine.id,
+        image: service.image || "",
+        privateIp: machine.private_ip,
+        isWeb: parsed.webService?.name === service.name,
+      }));
 
       // Save environment
       const url = `https://${createdAppName}.fly.dev`;
@@ -199,23 +186,15 @@ export const upCommand = new Command("up")
           console.log(`    ${pc.bold(svc.name.padEnd(16))} ${svc.image.substring(0, 30).padEnd(32)} ${pc.cyan(url)}`);
         } else {
           console.log(
-            `    ${pc.bold(svc.name.padEnd(16))} ${svc.image.substring(0, 30).padEnd(32)} ${svc.privateIp} (internal)`
+            `    ${pc.bold(svc.name.padEnd(16))} ${svc.image.substring(0, 30).padEnd(32)} localhost (internal)`
           );
         }
       }
       console.log("");
     } catch (err) {
-      // Atomic cleanup
+      // Atomic cleanup — delete the app (takes all machines with it)
       console.error("");
       console.error(pc.red("Provisioning failed. Cleaning up..."));
-
-      for (const machineId of createdMachineIds) {
-        try {
-          await client.deleteMachine(createdAppName, machineId, true);
-        } catch {
-          // Best effort cleanup
-        }
-      }
 
       try {
         await client.deleteApp(createdAppName);
@@ -227,41 +206,3 @@ export const upCommand = new Command("up")
       process.exit(1);
     }
   });
-
-function orderServices(
-  services: ComposeService[],
-  webService: ComposeService | null
-): ComposeService[] {
-  // Simple topological sort: web service first, then services without deps, then with deps
-  const ordered: ComposeService[] = [];
-  const remaining = [...services];
-  const placed = new Set<string>();
-
-  // Web service first (if it has no dependencies)
-  if (webService && webService.dependsOn.length === 0) {
-    ordered.push(webService);
-    placed.add(webService.name);
-    const idx = remaining.findIndex((s) => s.name === webService.name);
-    if (idx >= 0) remaining.splice(idx, 1);
-  }
-
-  // Simple iterative placement
-  let maxIter = remaining.length * 2;
-  while (remaining.length > 0 && maxIter > 0) {
-    maxIter--;
-    for (let i = 0; i < remaining.length; i++) {
-      const service = remaining[i];
-      const depsReady = service.dependsOn.every((d) => placed.has(d));
-      if (depsReady) {
-        ordered.push(service);
-        placed.add(service.name);
-        remaining.splice(i, 1);
-        break;
-      }
-    }
-  }
-
-  // Add any remaining (circular deps fallback)
-  ordered.push(...remaining);
-  return ordered;
-}

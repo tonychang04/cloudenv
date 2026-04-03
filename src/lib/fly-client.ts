@@ -14,6 +14,15 @@ export class FlyApiError extends Error {
   }
 }
 
+export interface FlyContainerConfig {
+  name: string;
+  image: string;
+  env?: Record<string, string>;
+  cmd?: string[];
+  files?: Array<{ guest_path: string; raw_value: string }>;
+  depends_on?: Array<{ name: string; condition: "started" | "healthy" | "exited_successfully" }>;
+}
+
 export interface CreateMachineRequest {
   name?: string;
   region?: string;
@@ -25,6 +34,7 @@ export interface CreateMachineRequest {
     init?: { cmd?: string[] };
     restart?: { policy: string };
     metadata?: Record<string, string>;
+    containers?: FlyContainerConfig[];
   };
 }
 

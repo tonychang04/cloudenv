@@ -77,11 +77,18 @@ vi.mock("../../lib/compose", () => ({
     internalServices: [],
   }),
   generateAppName: () => "ce-test-repo-main",
-  toFlyMachineConfig: () => ({
-    name: "web",
+  toMultiContainerConfig: () => ({
     region: "iad",
-    config: { image: "nginx:alpine", env: {}, guest: { cpu_kind: "shared", cpus: 1, memory_mb: 256 } },
+    config: {
+      image: "nginx:alpine",
+      guest: { cpu_kind: "shared", cpus: 2, memory_mb: 2048 },
+      restart: { policy: "on-failure" },
+      metadata: { cloudenv: "true" },
+      containers: [{ name: "web", image: "nginx:alpine", files: [] }],
+      services: [{ protocol: "tcp", internal_port: 80, ports: [{ port: 80, handlers: ["http"] }, { port: 443, handlers: ["tls", "http"] }] }],
+    },
   }),
+  detectPortConflicts: () => {},
 }));
 
 describe("up command", () => {
