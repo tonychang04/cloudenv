@@ -14,7 +14,7 @@ export interface ComposeService {
   ports: Array<{ host: number; container: number }>;
   environment: Record<string, string>;
   command?: string[];
-  dependsOn: string[];
+  dependsOn: Array<{ service: string; condition: "started" | "healthy" | "exited_successfully" }>;
 }
 
 export interface ParsedCompose {
@@ -270,15 +270,25 @@ function parseCommand(cmd: unknown): string[] | undefined {
   return undefined;
 }
 
-function parseDependsOn(deps: unknown): string[] {
+function parseDependsOn(deps: unknown): Array<{ service: string; condition: "started" | "healthy" | "exited_successfully" }> {
   if (!deps) {
     return [];
   }
   if (Array.isArray(deps)) {
-    return deps.map(String);
+    return deps.map((d) => ({ service: String(d), condition: "started" as const }));
   }
   if (typeof deps === "object") {
-    return Object.keys(deps as Record<string, unknown>);
+    const result: Array<{ service: string; condition: "started" | "healthy" | "exited_successfully" }> = [];
+    for (const [name, config] of Object.entries(deps as Record<string, unknown>)) {
+      let condition: "started" | "healthy" | "exited_successfully" = "started";
+      if (config && typeof config === "object") {
+        const c = (config as Record<string, unknown>).condition;
+        if (c === "service_healthy") condition = "healthy";
+        else if (c === "service_completed_successfully") condition = "exited_successfully";
+      }
+      result.push({ service: name, condition });
+    }
+    return result;
   }
   return [];
 }
@@ -419,8 +429,8 @@ export function toMultiContainerConfig(
 
     if (service.dependsOn.length > 0) {
       container.depends_on = service.dependsOn.map((dep) => ({
-        name: dep,
-        condition: "started" as const,
+        name: dep.service,
+        condition: dep.condition,
       }));
     }
 

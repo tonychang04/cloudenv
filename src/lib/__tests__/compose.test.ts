@@ -39,7 +39,10 @@ services:
     expect(web.environment.DATABASE_URL).toBe(
       "postgres://postgres:password@db:5432/myapp"
     );
-    expect(web.dependsOn).toEqual(["db", "redis"]);
+    expect(web.dependsOn).toEqual([
+      { service: "db", condition: "started" },
+      { service: "redis", condition: "started" },
+    ]);
 
     const db = result.services.find((s) => s.name === "db")!;
     expect(db.image).toBe("postgres:16");
@@ -260,7 +263,10 @@ services:
   redis:
     image: redis:7
 `);
-    expect(result.services[0].dependsOn).toEqual(["db", "redis"]);
+    expect(result.services[0].dependsOn).toEqual([
+      { service: "db", condition: "started" },
+      { service: "redis", condition: "healthy" },
+    ]);
   });
 });
 
