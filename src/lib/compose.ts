@@ -23,7 +23,10 @@ export interface ParsedCompose {
   internalServices: ComposeService[];
 }
 
-const UNSUPPORTED_KEYS = ["volumes", "networks", "profiles", "secrets", "configs"];
+// Networks are silently ignored (shared localhost replaces them)
+// Volumes get a preflight check instead of a generic warning
+const UNSUPPORTED_KEYS = ["profiles", "secrets", "configs"];
+const SILENT_KEYS = ["volumes", "networks", "security_opt", "restart"];
 
 export interface PreflightIssue {
   level: "error" | "warning";
@@ -110,9 +113,9 @@ export function parseComposeContent(content: string): ParsedCompose {
     throw new Error("Compose file must contain a 'services' object");
   }
 
-  // Warn about unsupported top-level keys
+  // Warn about unsupported top-level keys (skip silently handled ones)
   for (const key of Object.keys(doc)) {
-    if (key !== "services" && UNSUPPORTED_KEYS.includes(key)) {
+    if (key !== "services" && key !== "version" && UNSUPPORTED_KEYS.includes(key)) {
       console.warn(`Warning: '${key}' is not supported by cloudenv and will be ignored`);
     }
   }
@@ -120,10 +123,10 @@ export function parseComposeContent(content: string): ParsedCompose {
   const services: ComposeService[] = [];
 
   for (const [name, def] of Object.entries(servicesObj)) {
-    // Warn about unsupported service-level keys
+    // Warn about unsupported service-level keys (skip silently handled ones)
     for (const key of Object.keys(def)) {
-      if (UNSUPPORTED_KEYS.includes(key)) {
-        console.warn(`Warning: '${key}' is not supported by cloudenv and will be ignored`);
+      if (UNSUPPORTED_KEYS.includes(key) && !SILENT_KEYS.includes(key)) {
+        console.warn(`Warning: '${key}' on service '${name}' is not supported and will be ignored`);
       }
     }
 
