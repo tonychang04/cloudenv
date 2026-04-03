@@ -283,13 +283,23 @@ export const upCommand = new Command("up")
       const machineConfig = toMultiContainerConfig(parsed, options.region, portOverride);
       const machine = await client.createMachine(createdAppName, machineConfig);
 
-      // Wait for machine, but don't fail hard — check container health on timeout
+      // Wait for machine with retry (Fly API caps at 60s per call)
       let machineReady = false;
-      try {
-        await client.waitForMachine(createdAppName, machine.id, "started", 60);
-        machineReady = true;
-      } catch {
-        // Timeout or error — check machine state for diagnostics
+      for (let attempt = 0; attempt < 3 && !machineReady; attempt++) {
+        try {
+          await client.waitForMachine(createdAppName, machine.id, "started", 60);
+          machineReady = true;
+        } catch {
+          if (attempt < 2) {
+            // Check if machine is making progress before retrying
+            const check = await client.listMachines(createdAppName);
+            const m = check.find((x) => x.id === machine.id);
+            if (m?.state === "started") {
+              machineReady = true;
+            }
+            // else retry wait
+          }
+        }
       }
 
       // Get machine status for diagnostics
