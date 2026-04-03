@@ -9,6 +9,7 @@ export interface ComposeService {
   build?: {
     context: string;
     dockerfile?: string;
+    target?: string;
   };
   ports: Array<{ host: number; container: number }>;
   environment: Record<string, string>;
@@ -90,7 +91,7 @@ function parseService(name: string, def: Record<string, unknown>): ComposeServic
 
 function parseBuild(
   build: unknown
-): { context: string; dockerfile?: string } | undefined {
+): { context: string; dockerfile?: string; target?: string } | undefined {
   if (build === undefined || build === null) {
     return undefined;
   }
@@ -102,9 +103,15 @@ function parseBuild(
     return {
       context: (obj.context as string) || ".",
       dockerfile: obj.dockerfile as string | undefined,
+      target: obj.target as string | undefined,
     };
   }
   return undefined;
+}
+
+// Resolve ${VAR:-default} to the default value, or strip ${VAR} to empty
+function resolveEnvVar(value: string): string {
+  return value.replace(/\$\{[^}]*:-([^}]*)\}/g, "$1").replace(/\$\{[^}]*\}/g, "");
 }
 
 function parsePorts(
@@ -114,24 +121,26 @@ function parsePorts(
     return [];
   }
 
-  return ports.map((p) => {
-    if (typeof p === "object" && p !== null) {
-      const obj = p as Record<string, unknown>;
-      return {
-        host: Number(obj.published),
-        container: Number(obj.target),
-      };
-    }
+  return ports
+    .map((p) => {
+      if (typeof p === "object" && p !== null) {
+        const obj = p as Record<string, unknown>;
+        return {
+          host: Number(resolveEnvVar(String(obj.published))),
+          container: Number(resolveEnvVar(String(obj.target))),
+        };
+      }
 
-    const str = String(p);
-    if (str.includes(":")) {
-      const [host, container] = str.split(":");
-      return { host: Number(host), container: Number(container) };
-    }
+      const str = resolveEnvVar(String(p));
+      if (str.includes(":")) {
+        const [host, container] = str.split(":");
+        return { host: Number(host), container: Number(container) };
+      }
 
-    const port = Number(str);
-    return { host: port, container: port };
-  });
+      const port = Number(str);
+      return { host: port, container: port };
+    })
+    .filter((p) => !isNaN(p.host) && !isNaN(p.container));
 }
 
 function parseEnvironment(env: unknown): Record<string, string> {
@@ -147,7 +156,7 @@ function parseEnvironment(env: unknown): Record<string, string> {
       if (eqIndex === -1) {
         result[str] = "";
       } else {
-        result[str.slice(0, eqIndex)] = str.slice(eqIndex + 1);
+        result[str.slice(0, eqIndex)] = resolveEnvVar(str.slice(eqIndex + 1));
       }
     }
     return result;
@@ -156,7 +165,7 @@ function parseEnvironment(env: unknown): Record<string, string> {
   if (typeof env === "object") {
     const result: Record<string, string> = {};
     for (const [key, value] of Object.entries(env as Record<string, unknown>)) {
-      result[key] = String(value);
+      result[key] = resolveEnvVar(String(value));
     }
     return result;
   }

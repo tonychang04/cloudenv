@@ -18,14 +18,16 @@ export function buildAndPush(
   buildContext: string,
   dockerfile: string | undefined,
   appName: string,
-  flyToken: string
+  flyToken: string,
+  target?: string
 ): BuildResult {
   const imageRef = `registry.fly.io/${appName}/${serviceName}:latest`;
 
   // Build the image
   const dockerfileArgs = dockerfile ? `-f ${dockerfile}` : "";
+  const targetArgs = target ? `--target ${target}` : "";
   try {
-    execSync(`docker build -t ${imageRef} ${dockerfileArgs} ${buildContext}`, {
+    execSync(`docker build -t ${imageRef} ${dockerfileArgs} ${targetArgs} ${buildContext}`, {
       stdio: "inherit",
     });
   } catch (error) {

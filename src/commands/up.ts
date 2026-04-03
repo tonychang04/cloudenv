@@ -174,7 +174,8 @@ export const upCommand = new Command("up")
               service.build.context,
               service.build.dockerfile,
               createdAppName,
-              config.flyApiToken
+              config.flyApiToken,
+              service.build.target
             );
             service.image = result.imageRef;
             buildSpinner.success({

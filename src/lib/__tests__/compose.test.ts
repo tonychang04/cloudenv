@@ -151,6 +151,50 @@ services:
     expect(result.services[0].environment).toEqual({ KEY: "val" });
   });
 
+  it("resolves ${VAR:-default} syntax in ports", () => {
+    const result = parseComposeContent(`
+services:
+  app:
+    image: myapp
+    ports:
+      - "\${APP_PORT:-3000}:3000"
+`);
+    expect(result.services[0].ports).toEqual([{ host: 3000, container: 3000 }]);
+  });
+
+  it("resolves ${VAR:-default} syntax in environment values", () => {
+    const result = parseComposeContent(`
+services:
+  app:
+    image: myapp
+    environment:
+      - POSTGRES_USER=\${POSTGRES_USER:-postgres}
+      - POSTGRES_DB=\${POSTGRES_DB:-mydb}
+`);
+    expect(result.services[0].environment).toEqual({
+      POSTGRES_USER: "postgres",
+      POSTGRES_DB: "mydb",
+    });
+  });
+
+  it("parses build with target field", () => {
+    const result = parseComposeContent(`
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    ports:
+      - "3000:3000"
+`);
+    expect(result.services[0].build).toEqual({
+      context: ".",
+      dockerfile: "Dockerfile",
+      target: "dev",
+    });
+  });
+
   it("identifies webService as first service with ports", () => {
     const result = parseComposeContent(`
 services:
